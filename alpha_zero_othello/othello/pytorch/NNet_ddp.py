@@ -84,11 +84,13 @@ class NNetWrapper(NeuralNet):
 
         for epoch in range(args.epochs):
             print('{}/{} EPOCH ::: {}'.format(dist.get_rank(), dist.get_world_size(), epoch+1))
-
+            self.nnet.train()
+            pi_losses = AverageMeter()
+            v_losses = AverageMeter() 
             ds = ExamplesDataset(examples)
-            dl = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True, num_workers=0, pin_memory=True)
+            dl = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True, pin_memory=True)
             t = tqdm(dl, desc='Training Net')
-            
+
             with torch.jit.fuser('fuser2'):
                 for boards, target_pis, target_vs in t:
                     # predict
@@ -100,8 +102,11 @@ class NNetWrapper(NeuralNet):
                     l_v = loss_v(target_vs, out_v)
                     total_loss = l_pi + l_v
 
+                    pi_losses.update(l_pi, boards.size(0))
+                    v_losses.update(l_v, boards.size(0))
+                    t.set_postfix(Loss_pi=pi_losses, Loss_v=v_losses)
                     # compute gradient and do SGD step
-                    optimizer.zero_grad()
+                    optimizer.zero_grad(True)
                     total_loss.backward()
                     optimizer.step()
 
@@ -117,7 +122,7 @@ class NNetWrapper(NeuralNet):
         if args.cuda: board = board.contiguous().cuda()
         board = board.view(1, self.board_x, self.board_y)
         self.nnet.eval()
-        with torch.no_grad():
+        with torch.inference_mode():
             pi, v = self.nnet(board)
 
         # print('PREDICTION TIME TAKEN : {0:03f}'.format(time.time()-start))
