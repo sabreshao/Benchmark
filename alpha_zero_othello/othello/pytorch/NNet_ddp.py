@@ -52,8 +52,8 @@ class ExamplesDataset(torch.utils.data.Dataset):
     def __init__(self, examples):
         self.examples = examples
 
-    def __getitem__(self, i):
-        boards, pis, vs = self.examples[i]
+    def __getitem__(self, sample_ids):
+        boards, pis, vs = list(zip(*[self.examples[i] for i in sample_ids]))
         boards = torch.from_numpy(np.array(boards).astype(np.float32))
         target_pis = torch.from_numpy(np.array(pis).astype(np.float32))
         target_vs = torch.from_numpy(np.array(vs).astype(np.float32))
@@ -88,7 +88,9 @@ class NNetWrapper(NeuralNet):
             pi_losses = AverageMeter()
             v_losses = AverageMeter() 
             ds = ExamplesDataset(examples)
-            dl = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+            sampler = torch.utils.data.RandomSampler(ds, True)
+            sampler = torch.utils.data.BatchSampler(sampler, batch_size=args.batch_size, drop_last=True)
+            dl = torch.utils.data.DataLoader(ds, batch_size=None, sampler=sampler, pin_memory=True)
             t = tqdm(dl, desc='Training Net')
 
             with torch.jit.fuser('fuser2'):
@@ -118,7 +120,7 @@ class NNetWrapper(NeuralNet):
         start = time.time()
 
         # preparing input
-        board = torch.FloatTensor(board.astype(np.float64))
+        board = torch.from_numpy(board.astype(np.float32))
         if args.cuda: board = board.contiguous().cuda()
         board = board.view(1, self.board_x, self.board_y)
         self.nnet.eval()
