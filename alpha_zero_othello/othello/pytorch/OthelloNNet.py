@@ -48,14 +48,14 @@ class OthelloNNet(nn.Module):
     def forward(self, s):
         #                                                           s: batch_size x board_x x board_y
         s = s.view(-1, 1, self.board_x, self.board_y)                # batch_size x 1 x board_x x board_y
-        s = F.relu(self.bn1(self.conv1(s)), True)                          # batch_size x num_channels x board_x x board_y
-        s = F.relu(self.bn2(self.conv2(s)), True)                          # batch_size x num_channels x board_x x board_y
-        s = F.relu(self.bn3(self.conv3(s)), True)                          # batch_size x num_channels x (board_x-2) x (board_y-2)
-        s = F.relu(self.bn4(self.conv4(s)), True)                          # batch_size x num_channels x (board_x-4) x (board_y-4)
+        s = F.relu(self.bn1(self.conv1(s)))                          # batch_size x num_channels x board_x x board_y
+        s = F.relu(self.bn2(self.conv2(s)))                          # batch_size x num_channels x board_x x board_y
+        s = F.relu(self.bn3(self.conv3(s)))                          # batch_size x num_channels x (board_x-2) x (board_y-2)
+        s = F.relu(self.bn4(self.conv4(s)))                          # batch_size x num_channels x (board_x-4) x (board_y-4)
         s = s.view(-1, self.num_channels*(self.board_x-4)*(self.board_y-4))
 
-        s = F.dropout(F.relu(self.fc_bn1(self.fc1(s)), True), p=self.dropout, training=self.training)  # batch_size x 1024
-        s = F.dropout(F.relu(self.fc_bn2(self.fc2(s)), True), p=self.dropout, training=self.training)  # batch_size x 512
+        s = F.dropout(F.relu(self.fc_bn1(self.fc1(s))), p=self.dropout, training=self.training)  # batch_size x 1024
+        s = F.dropout(F.relu(self.fc_bn2(self.fc2(s))), p=self.dropout, training=self.training)  # batch_size x 512
 
         pi = self.fc3(s)                                                                         # batch_size x action_size
         v = self.fc4(s)                                                                          # batch_size x 1
