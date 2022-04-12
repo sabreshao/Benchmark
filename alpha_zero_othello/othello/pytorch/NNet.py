@@ -35,8 +35,8 @@ class ExamplesDataset(torch.utils.data.Dataset):
     def __init__(self, examples):
         self.examples = examples
 
-    def __getitem__(self, i):
-        boards, pis, vs = self.examples[i]
+    def __getitem__(self, sample_ids):
+        boards, pis, vs = list(zip(*[self.examples[i] for i in sample_ids]))
         boards = torch.from_numpy(np.array(boards).astype(np.float32))
         target_pis = torch.from_numpy(np.array(pis).astype(np.float32))
         target_vs = torch.from_numpy(np.array(vs).astype(np.float32))
@@ -67,7 +67,9 @@ class NNetWrapper(NeuralNet):
             pi_losses = AverageMeter()
             v_losses = AverageMeter()
             ds = ExamplesDataset(examples)
-            dl = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+            sampler = torch.utils.data.RandomSampler(ds, True)
+            sampler = torch.utils.data.BatchSampler(sampler, batch_size=args.batch_size, drop_last=True)
+            dl = torch.utils.data.DataLoader(ds, batch_size=None, sampler=sampler, pin_memory=True)
             t = tqdm(dl, desc='Training Net')
             
             with torch.autograd.profiler.profile(False, use_cuda=True, with_stack=True) as p:
@@ -75,6 +77,7 @@ class NNetWrapper(NeuralNet):
                     for boards, target_pis, target_vs in t:
                         if args.cuda:
                             boards, target_pis, target_vs = boards.contiguous().cuda(), target_pis.contiguous().cuda(), target_vs.contiguous().cuda()
+
                         # compute output
                         out_pi, out_v = self.nnet(boards)
                         l_pi = loss_pi(target_pis, out_pi)
