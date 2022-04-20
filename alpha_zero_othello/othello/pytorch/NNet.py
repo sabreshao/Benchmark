@@ -13,11 +13,12 @@ import torch
 import torch.optim as optim
 from .OthelloNNet import OthelloNNet as onnet
 
+
 args = dotdict({
     'lr': 0.001,
     'dropout': 0.3,
     'epochs': 20,
-    'batch_size': 128,
+    'batch_size': 256,
     'cuda': torch.cuda.is_available(),
     'num_channels': 512,
 })
@@ -28,7 +29,7 @@ def loss_pi(targets, outputs):
 
 
 def loss_v(targets, outputs):
-    return torch.sum((targets - outputs.view(-1)) ** 2) / targets.size()[0]
+    return torch.nn.functional.mse_loss(torch.squeeze(outputs, 1), targets)
 
 
 class ExamplesDataset(torch.utils.data.Dataset):
@@ -59,43 +60,39 @@ class NNetWrapper(NeuralNet):
         """
         examples: list of examples, each example is of form (board, pi, v)
         """
+        self.nnet.train()
         optimizer = optim.Adam(self.nnet.parameters())
 
         for epoch in range(args.epochs):
             print('EPOCH ::: ' + str(epoch + 1))
-            self.nnet.train()
+            
             pi_losses = AverageMeter()
             v_losses = AverageMeter()
             ds = ExamplesDataset(examples)
             sampler = torch.utils.data.RandomSampler(ds, True)
             sampler = torch.utils.data.BatchSampler(sampler, batch_size=args.batch_size, drop_last=True)
             dl = torch.utils.data.DataLoader(ds, batch_size=None, sampler=sampler, pin_memory=True)
-            t = tqdm(dl, desc='Training Net')
-            
-            with torch.autograd.profiler.profile(False, use_cuda=True, with_stack=True) as p:
-                with torch.jit.fuser('fuser2'):
-                    for boards, target_pis, target_vs in t:
-                        if args.cuda:
-                            boards, target_pis, target_vs = boards.contiguous().cuda(), target_pis.contiguous().cuda(), target_vs.contiguous().cuda()
+            t = tqdm(dl, desc='Training Net', disable=False)
 
-                        # compute output
-                        out_pi, out_v = self.nnet(boards)
-                        l_pi = loss_pi(target_pis, out_pi)
-                        l_v = loss_v(target_vs, out_v)
-                        total_loss = l_pi + l_v
-                        
-                        pi_losses.update(l_pi, boards.size(0))
-                        v_losses.update(l_v, boards.size(0))
-                        t.set_postfix(Loss_pi=pi_losses, Loss_v=v_losses)
+            with torch.jit.fuser('fuser2'):
+                for boards, target_pis, target_vs in t:
+                    if args.cuda:
+                        boards, target_pis, target_vs = boards.contiguous().cuda(non_blocking=True), target_pis.contiguous().cuda(non_blocking=True), target_vs.contiguous().cuda(non_blocking=True)
 
-                        # compute gradient and do SGD step
-                        optimizer.zero_grad(True)
-                        total_loss.backward()
-                        optimizer.step()
-            if p:
-                p.export_chrome_trace("autograd_trace.json")
-                print(p.key_averages().table(sort_by="cpu_time_total", row_limit=10))
-                print(p.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+                    # compute output
+                    out_pi, out_v = self.nnet(boards)
+                    l_pi = loss_pi(target_pis, out_pi)
+                    l_v = loss_v(target_vs, out_v)
+                    total_loss = l_pi + l_v
+                                            
+                    pi_losses.update(l_pi.item(), boards.size(0))
+                    v_losses.update(l_v.item(), boards.size(0))
+                    t.set_postfix(Loss_pi=pi_losses, Loss_v=v_losses)
+
+                    # compute gradient and do SGD step
+                    total_loss.backward()
+                    optimizer.step()
+                    optimizer.zero_grad(True)
 
     def predict(self, board):
         """

@@ -32,7 +32,7 @@ parser = argparse.ArgumentParser(description='Alpha zero.')
 parser.add_argument('--lr', type=float, default=0.0001, help='...')
 parser.add_argument('--dropout', type=float, default=0.3, help='...')
 parser.add_argument('--epochs', type=int, default=20, help='...')
-parser.add_argument('--batch_size', type=int, default=128, help='...')
+parser.add_argument('--batch_size', type=int, default=256, help='...')
 parser.add_argument('--cuda', type=bool, default=True, help='...')
 parser.add_argument('--num_channels', type=int, default=512, help='...')
 parser.add_argument('--local_rank', type=int, default=0, help='node rank for distributed training.')
@@ -45,7 +45,7 @@ def loss_pi(targets, outputs):
 
 
 def loss_v(targets, outputs):
-    return torch.sum((targets - outputs.view(-1)) ** 2) / targets.size()[0]
+    return torch.nn.functional.mse_loss(torch.squeeze(outputs, 1), targets)
 
 
 class ExamplesDataset(torch.utils.data.Dataset):
@@ -80,37 +80,39 @@ class NNetWrapper(NeuralNet):
         """
         examples: list of examples, each example is of form (board, pi, v)
         """
+        self.nnet.train()
         optimizer = optim.Adam(self.nnet.parameters())
 
         for epoch in range(args.epochs):
             print('{}/{} EPOCH ::: {}'.format(dist.get_rank(), dist.get_world_size(), epoch+1))
-            self.nnet.train()
+            
             pi_losses = AverageMeter()
-            v_losses = AverageMeter() 
+            v_losses = AverageMeter()
             ds = ExamplesDataset(examples)
             sampler = torch.utils.data.RandomSampler(ds, True)
             sampler = torch.utils.data.BatchSampler(sampler, batch_size=args.batch_size, drop_last=True)
             dl = torch.utils.data.DataLoader(ds, batch_size=None, sampler=sampler, pin_memory=True)
-            t = tqdm(dl, desc='Training Net')
+            t = tqdm(dl, desc='Training Net', disable=False)
 
             with torch.jit.fuser('fuser2'):
                 for boards, target_pis, target_vs in t:
-                    # predict
                     if args.cuda:
-                        boards, target_pis, target_vs = boards.contiguous().cuda(), target_pis.contiguous().cuda(), target_vs.contiguous().cuda()
+                        boards, target_pis, target_vs = boards.contiguous().cuda(non_blocking=True), target_pis.contiguous().cuda(non_blocking=True), target_vs.contiguous().cuda(non_blocking=True)
+
                     # compute output
                     out_pi, out_v = self.nnet(boards)
                     l_pi = loss_pi(target_pis, out_pi)
                     l_v = loss_v(target_vs, out_v)
                     total_loss = l_pi + l_v
-
-                    pi_losses.update(l_pi, boards.size(0))
-                    v_losses.update(l_v, boards.size(0))
+                                            
+                    pi_losses.update(l_pi.item(), boards.size(0))
+                    v_losses.update(l_v.item(), boards.size(0))
                     t.set_postfix(Loss_pi=pi_losses, Loss_v=v_losses)
+
                     # compute gradient and do SGD step
-                    optimizer.zero_grad(True)
                     total_loss.backward()
                     optimizer.step()
+                    optimizer.zero_grad(True)
 
     def predict(self, board):
         """
